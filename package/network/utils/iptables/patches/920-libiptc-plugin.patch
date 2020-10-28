@@ -1,0 +1,673 @@
+From ed87405ead89a123b43cdca52f4c8f13cb0ad637 Mon Sep 17 00:00:00 2001
+From: Eric Montellese <emontellese@netgear.com>
+Date: Wed, 21 Oct 2020 16:02:42 -0400
+Subject: [PATCH] Inserted hooks for plugin (libiptc-plugin.so)
+
+---
+ configure.ac                     |   1 +
+ include/Makefile.am              |   1 +
+ include/libiptc/libiptc-plugin.h | 155 ++++++++++++++++++++
+ libiptc/Makefile.am              |   2 +-
+ libiptc/libiptc-plugin.c         | 243 +++++++++++++++++++++++++++++++
+ libiptc/libiptc-plugin.pc.in     |  10 ++
+ libiptc/libiptc.c                |  75 ++++++++++
+ 7 files changed, 486 insertions(+), 1 deletion(-)
+ create mode 100644 include/libiptc/libiptc-plugin.h
+ create mode 100644 libiptc/libiptc-plugin.c
+ create mode 100644 libiptc/libiptc-plugin.pc.in
+
+diff --git a/configure.ac b/configure.ac
+index b94512d7..8c64c1c0 100644
+--- a/configure.ac
++++ b/configure.ac
+@@ -248,6 +248,7 @@ AC_CONFIG_FILES([Makefile extensions/GNUmakefile include/Makefile
+ 	iptables/iptables-apply.8 iptables/iptables-xml.1
+ 	libipq/Makefile libipq/libipq.pc
+ 	libiptc/Makefile libiptc/libiptc.pc
++	libiptc/libiptc-plugin.pc
+ 	libiptc/libip4tc.pc libiptc/libip6tc.pc
+ 	libxtables/Makefile utils/Makefile
+ 	include/xtables-version.h include/iptables/internal.h
+diff --git a/include/Makefile.am b/include/Makefile.am
+index e6951209..13fe1771 100644
+--- a/include/Makefile.am
++++ b/include/Makefile.am
+@@ -9,4 +9,5 @@ endif
+ 
+ nobase_include_HEADERS += \
+ 	libiptc/ipt_kernel_headers.h libiptc/libiptc.h \
++	libiptc/libiptc-plugin.h \
+ 	libiptc/libip6tc.h libiptc/libxtc.h libiptc/xtcshared.h
+diff --git a/include/libiptc/libiptc-plugin.h b/include/libiptc/libiptc-plugin.h
+new file mode 100644
+index 00000000..14672fef
+--- /dev/null
++++ b/include/libiptc/libiptc-plugin.h
+@@ -0,0 +1,155 @@
++//
++// Created by paul on 10/8/20.
++//
++
++#ifndef IPTABLES_LIBIPTC_PLUGIN_H
++#define IPTABLES_LIBIPTC_PLUGIN_H
++
++#include <sys/socket.h>
++
++#include <linux/netfilter.h>
++/* struct ipt_entry */
++#include <linux/netfilter_ipv4/ip_tables.h>
++/* struct ip6t_entry */
++#include <linux/netfilter_ipv6/ip6_tables.h>
++
++typedef enum {
++    kIPv4 = AF_INET,
++    kIPv6 = AF_INET6
++} tIPTentryType;
++
++typedef void tIPTentry;
++
++#ifdef IP_VERSION
++#define AF_FAMILY   kIPv4
++#else
++#define IP_VERSION 6
++#define AF_FAMILY   kIPv6
++#endif
++
++typedef enum {
++    kNoOp = 0,
++    //
++    kInit,
++    kCommit,
++    kFree,
++    // entry operations
++    kAppendEntry,
++    kInsertEntry,
++    kReplaceEntry,
++    kDeleteEntry,
++    kDeleteEntryNum,
++    // chain operations
++    kCreateChain,
++    kRenameChain,
++    kFlushEntries,
++    kDeleteChain,
++    // policy operations
++    kGetPolicy,
++    kSetPolicy,
++    // counter operations
++    kReadCounter,
++    kSetCounter,
++    kZeroCounter,
++    kZeroEntries        /* zero all the counters in a chain */
++} tPluginOp;
++
++typedef enum {
++    kActionStandard,	/* standard target (ACCEPT, ...) */
++    kActionModule,		/* extension module (SNAT, ...) */
++    kActionFallThrough,	/* fallthrough rule */
++    kActionJump         /* jump to other chain */
++} tActionType;
++
++
++#define CURRENT_API_VERSION 4
++
++typedef struct {
++
++    unsigned int api_version;
++
++    void (*init)(  struct xtc_handle * handle, const char * table );
++
++    /* Unlike other plugin hooks, commit is called _after_ the commit completes successfully. This is so that
++     * notifications to other software components are guaranteed to occur after the changes have been applied */
++    void (*commit)(  struct xtc_handle * handle, const char * table );
++
++    /* all done - clean up */
++    void (*free)(  struct xtc_handle * handle, const char * table );
++
++    /* * * rule operations * * */
++
++    bool (*append_entry)(  struct xtc_handle *  handle,
++                           const char *         table,
++                           const char *         chain,
++                           const tIPTentryType  entryType,
++                           const tIPTentry *    entry );
++
++    bool (*insert_entry)(  struct xtc_handle *  handle,
++                           const char *         table,
++                           const char *         chain,
++                           const tIPTentryType  entryType,
++                           const tIPTentry *    entry,
++                           unsigned int         rulenum );
++
++    bool (*replace_entry)( struct xtc_handle *  handle,
++                           const char *         table,
++                           const char *         chain,
++                           const tIPTentryType  entryType,
++                           const tIPTentry *    entry,
++                           unsigned int         rulenum );
++
++    bool (*delete_entry)(  struct xtc_handle *  handle,
++                           const char *         table,
++                           const char *         chain,
++                           const tIPTentryType  entryType,
++                           const tIPTentry *    entry );
++
++    bool (*delete_num_entry)( struct xtc_handle * handle,
++                           const char *         table,
++                           const char *         chain,
++                           const tIPTentryType  entryType,
++                           const tIPTentry *    entry,
++                           unsigned int         rulenum );
++
++    /* * *  chain operations * * */
++
++    bool (*create_chain)(  struct xtc_handle *  handle,
++                           const char *         table,
++                           const char *         chain );
++
++    bool (*rename_chain)(  struct xtc_handle *  handle,
++                           const char *         table,
++                           const char *         oldname,
++                           const char *         newname );
++
++    bool (*flush_entries)( struct xtc_handle *  handle,
++                           const char *         table,
++                           const char *         chain );
++
++    bool (*delete_chain)(  struct xtc_handle *  handle,
++                           const char *         table,
++                           const char *         chain );
++
++    /* * *  policy operations * * */
++
++    bool (*set_policy)(    struct xtc_handle *  handle,
++                           const char *         table,
++                           const char *         chain,
++                           const char *         policy );
++
++    /* * *  counter operations * * */
++
++    bool (*zero_counter)(  struct xtc_handle *  handle,
++                           const char *         table,
++                           const char *         chain,
++                           unsigned int         rulenum );
++
++    /* zero all the counters in a chain */
++    bool (*zero_entries)(  struct xtc_handle *  handle,
++                           const char *         table,
++                           const char *         chain );
++
++} tPluginOps;
++
++#endif //IPTABLES_LIBIPTC_PLUGIN_H
+diff --git a/libiptc/Makefile.am b/libiptc/Makefile.am
+index 638295db..4b278271 100644
+--- a/libiptc/Makefile.am
++++ b/libiptc/Makefile.am
+@@ -3,7 +3,7 @@
+ AM_CFLAGS        = ${regular_CFLAGS}
+ AM_CPPFLAGS      = ${regular_CPPFLAGS} -I${top_builddir}/include -I${top_srcdir}/include ${kinclude_CPPFLAGS}
+ 
+-pkgconfig_DATA      = libiptc.pc libip4tc.pc libip6tc.pc
++pkgconfig_DATA      = libiptc.pc libip4tc.pc libip6tc.pc libiptc-plugin.pc
+ 
+ lib_LTLIBRARIES     = libip4tc.la libip6tc.la libiptc.la
+ libiptc_la_SOURCES  =
+diff --git a/libiptc/libiptc-plugin.c b/libiptc/libiptc-plugin.c
+new file mode 100644
+index 00000000..5ae0c80e
+--- /dev/null
++++ b/libiptc/libiptc-plugin.c
+@@ -0,0 +1,243 @@
++//
++// Created by paul on 10/8/20.
++//
++
++#include <dlfcn.h>
++#include <netdb.h>
++#include <stdarg.h>
++#include <libiptc/libiptc.h>
++
++#define debugMsg( msg, ... )  fprintf( stderr, msg "\n", ##__VA_ARGS__ );
++
++static tPluginOps * pluginOps = NULL;
++
++void iptc_plugin_init ( struct xtc_handle * handle,
++                        const char *        tablename );
++
++void iptc_plugin_commit( struct xtc_handle * handle );
++
++void iptc_plugin_free( struct xtc_handle * handle );
++
++/* * * rule operations * * */
++
++bool iptc_plugin_append_entry(  struct xtc_handle *  handle,
++                                const xt_chainlabel  chain,
++                                const STRUCT_ENTRY * entry );
++
++bool iptc_plugin_insert_entry(  struct xtc_handle *  handle,
++                                const xt_chainlabel  chain,
++                                const STRUCT_ENTRY * entry,
++                                unsigned int         ruleNum );
++
++bool iptc_plugin_replace_entry( struct xtc_handle *  handle,
++                                const xt_chainlabel  chain,
++                                const STRUCT_ENTRY * entry,
++                                unsigned int         ruleNum );
++
++bool iptc_plugin_delete_entry(  struct xtc_handle *  handle,
++                                const xt_chainlabel  chain,
++                                const STRUCT_ENTRY * entry,
++                                unsigned char *      matchmask );
++
++bool iptc_plugin_delete_num_entry( struct xtc_handle * handle,
++                                const xt_chainlabel  chain,
++                                const STRUCT_ENTRY * entry,
++                                unsigned int         ruleNum );
++
++/* * * chain operations * * */
++
++bool iptc_plugin_create_chain(  struct xtc_handle *  handle,
++                                const xt_chainlabel  chain );
++
++bool iptc_plugin_rename_chain(  struct xtc_handle *  handle,
++                                const xt_chainlabel  oldName,
++                                const xt_chainlabel  newName );
++
++bool iptc_plugin_flush_entries( struct xtc_handle *  handle,
++                                const xt_chainlabel  chain );
++
++bool iptc_plugin_delete_chain(  struct xtc_handle *  handle,
++                                const xt_chainlabel  chain );
++
++/* * * policy operations * * */
++
++bool iptc_plugin_set_policy(    struct xtc_handle *  handle,
++                                const xt_chainlabel  chain,
++                                const xt_chainlabel  policy,
++                                struct xt_counters * counters );
++
++/* * * counter operations * * */
++
++bool iptc_plugin_zero_counter(  struct xtc_handle *  handle,
++                                const xt_chainlabel  chain,
++                                unsigned int         ruleNum );
++
++/* zero all the counters in a chain */
++bool iptc_plugin_zero_entries(  struct xtc_handle *  handle,
++                                const xt_chainlabel  chain );
++
++
++
++
++/* *************************************************** */
++
++
++void iptc_plugin_init ( struct xtc_handle * handle, const char * tablename )
++{
++    // debugMsg( "%s, table: %s", __FUNCTION__ , tablename );
++    void * dlHandle = dlopen( "libiptc-plugin.so", RTLD_GLOBAL | RTLD_NOW );
++    if (dlHandle == NULL) {
++        fprintf( stderr, "Unable to open plugin: %s\n", dlerror() );
++    } else {
++        pluginOps = dlsym( dlHandle, "libiptc_ops" );
++        if ( pluginOps == NULL ) {
++            fprintf( stderr, "Unable to locate symbol in plugin: %s\n", dlerror() );
++        } else {
++            if ( pluginOps->api_version != CURRENT_API_VERSION ) {
++                fprintf( stderr, "plugin has an incompatible API version\n" );
++                pluginOps = NULL;
++            }
++        }
++    }
++
++    if ( pluginOps != NULL && pluginOps->init != NULL ) {
++        (*pluginOps->init)( handle, tablename );
++    }
++}
++
++void iptc_plugin_commit( struct xtc_handle * handle )
++{
++    // debugMsg( "%s, table: %s", __FUNCTION__, handle->info.name );
++    if ( pluginOps != NULL && pluginOps->commit != NULL ) {
++        (*pluginOps->commit)( handle, handle->info.name );
++    }
++}
++
++void iptc_plugin_free( struct xtc_handle * handle )
++{
++    // debugMsg( "%s, table: %s", __FUNCTION__, handle->info.name );
++    if ( pluginOps != NULL && pluginOps->free != NULL ) {
++        (*pluginOps->free)( handle, handle->info.name );
++    }
++}
++
++bool iptc_plugin_append_entry( struct xtc_handle *  handle,
++                               const xt_chainlabel  chain,
++                               const STRUCT_ENTRY * entry )
++{
++    // debugMsg( "%s, table: %s, chain: %s", __FUNCTION__ , handle->info.name, chain );
++    return pluginOps != NULL
++        && pluginOps->append_entry != NULL
++        && (*pluginOps->append_entry)( handle, handle->info.name, chain, AF_FAMILY, entry );
++}
++
++bool iptc_plugin_insert_entry( struct xtc_handle *  handle,
++                               const xt_chainlabel  chain,
++                               const STRUCT_ENTRY * entry,
++                               unsigned int         ruleNum )
++{
++    // debugMsg( "%s, table: %s, chain: %s", __FUNCTION__ , handle->info.name, chain );
++    return pluginOps != NULL
++        && pluginOps->insert_entry != NULL
++        && (*pluginOps->insert_entry)( handle, handle->info.name, chain, AF_FAMILY, entry, ruleNum );
++}
++
++bool iptc_plugin_replace_entry( struct xtc_handle *  handle,
++                                const xt_chainlabel  chain,
++                                const STRUCT_ENTRY * entry,
++                                unsigned int         ruleNum )
++{
++    // debugMsg( "%s, table: %s, chain: %s", __FUNCTION__ , handle->info.name, chain );
++    return pluginOps != NULL
++        && pluginOps->replace_entry != NULL
++        && (*pluginOps->replace_entry)( handle, handle->info.name, chain, AF_FAMILY, entry, ruleNum );
++}
++
++bool iptc_plugin_delete_entry( struct xtc_handle *  handle,
++                               const xt_chainlabel  chain,
++                               const STRUCT_ENTRY * entry,
++                               unsigned char *      matchmask )
++{
++    // debugMsg( "%s, table: %s, chain: %s", __FUNCTION__ , handle->info.name, chain );
++    return pluginOps != NULL
++        && pluginOps->delete_entry != NULL
++        && (*pluginOps->delete_entry)( handle, handle->info.name, chain, AF_FAMILY, entry );
++}
++
++bool iptc_plugin_delete_num_entry( struct xtc_handle *  handle,
++                                   const xt_chainlabel  chain,
++                                   const STRUCT_ENTRY * entry,
++                                   unsigned int         ruleNum )
++{
++    // debugMsg( "%s, table: %s, chain: %s", __FUNCTION__ , handle->info.name, chain );
++    return pluginOps != NULL
++        && pluginOps->delete_num_entry != NULL
++        && (*pluginOps->delete_num_entry)( handle, handle->info.name, chain, AF_FAMILY, entry, ruleNum );
++}
++
++bool iptc_plugin_flush_entries( struct xtc_handle * handle,
++                                const xt_chainlabel chain )
++{
++    // debugMsg( "%s, table: %s, chain: %s", __FUNCTION__ , handle->info.name, chain );
++    return pluginOps != NULL
++        && pluginOps->flush_entries != NULL
++        && (*pluginOps->flush_entries)( handle, handle->info.name, chain );
++}
++
++bool iptc_plugin_create_chain( struct xtc_handle * handle,
++                               const xt_chainlabel chain )
++{
++    // debugMsg( "%s, table: %s, chain: %s", __FUNCTION__ , handle->info.name, chain );
++    return pluginOps != NULL
++        && pluginOps->create_chain != NULL
++        && (*pluginOps->create_chain)( handle, handle->info.name, chain );
++}
++
++bool iptc_plugin_rename_chain( struct xtc_handle * handle,
++                               const xt_chainlabel oldName,
++                               const xt_chainlabel newName )
++{
++    // debugMsg( "%s, table: %s, old chain: %s, new chain: %s", __FUNCTION__ , handle->info.name, oldName, newName );
++    return pluginOps != NULL
++        && pluginOps->rename_chain != NULL
++        && (*pluginOps->rename_chain)( handle, handle->info.name, oldName, newName );
++}
++
++bool iptc_plugin_delete_chain( struct xtc_handle * handle,
++                               const xt_chainlabel chain )
++{
++    // debugMsg( "%s, table: %s, chain: %s", __FUNCTION__ , handle->info.name, chain );
++    return pluginOps != NULL
++        && pluginOps->delete_chain != NULL
++        && (*pluginOps->delete_chain)( handle, handle->info.name, chain );
++}
++
++bool iptc_plugin_set_policy( struct xtc_handle *  handle,
++                             const xt_chainlabel  chain,
++                             const xt_chainlabel  policy,
++                             struct xt_counters * counters )
++{
++    // debugMsg( "%s, table: %s, chain: %s", __FUNCTION__ , handle->info.name, chain );
++    return pluginOps != NULL
++        && pluginOps->set_policy != NULL
++        && (*pluginOps->set_policy)( handle, handle->info.name, chain, policy );
++}
++
++bool iptc_plugin_zero_counter( struct xtc_handle * handle,
++                               const xt_chainlabel chain,
++                               unsigned int        ruleNum )
++{
++    // debugMsg( "%s, table: %s, chain: %s", __FUNCTION__ , handle->info.name, chain );
++    return pluginOps != NULL
++        && pluginOps->zero_counter != NULL
++        && (*pluginOps->zero_counter)( handle, handle->info.name, chain, ruleNum );
++}
++
++bool iptc_plugin_zero_entries( struct xtc_handle * handle,
++                               const xt_chainlabel chain )
++{
++    // debugMsg( "%s, table: %s, chain: %s", __FUNCTION__ , handle->info.name, chain );
++    return pluginOps != NULL
++        && pluginOps->zero_entries != NULL
++        && (*pluginOps->zero_entries)( handle, handle->info.name, chain );
++}
+diff --git a/libiptc/libiptc-plugin.pc.in b/libiptc/libiptc-plugin.pc.in
+new file mode 100644
+index 00000000..603eb5d6
+--- /dev/null
++++ b/libiptc/libiptc-plugin.pc.in
+@@ -0,0 +1,10 @@
++
++prefix=@prefix@
++exec_prefix=@exec_prefix@
++libdir=@libdir@
++includedir=@includedir@
++
++Name:		libiptc-plugin
++Description:	plugin interface fo iptables ruleset ADT and kernel interface
++Version:	@PACKAGE_VERSION@
++Requires:	libip4tc libip6tc
+diff --git a/libiptc/libiptc.c b/libiptc/libiptc.c
+index f4fb09fb..b36b52fe 100644
+--- a/libiptc/libiptc.c
++++ b/libiptc/libiptc.c
+@@ -152,6 +152,10 @@ enum bsearch_type {
+ 	BSEARCH_OFFSET,	/* Binary search based on offset */
+ };
+ 
++/* unconventional, but this is how libip4tc.c and libip6tc.c incorporate libiptc.c */
++#include "libiptc/libiptc-plugin.h"
++#include "libiptc-plugin.c"
++
+ /* allocate a new chain head for the cache */
+ static struct chain_head *iptcc_alloc_chain_head(const char *name, int hooknum)
+ {
+@@ -1371,6 +1375,9 @@ retry:
+ 		goto error;
+ 
+ 	CHECK(h);
++
++	iptc_plugin_init( h, tablename );
++
+ 	return h;
+ error:
+ 	TC_FREE(h);
+@@ -1386,6 +1393,9 @@ TC_FREE(struct xtc_handle *h)
+ 	struct chain_head *c, *tmp;
+ 
+ 	iptc_fn = TC_FREE;
++
++	iptc_plugin_free( h );
++
+ 	close(h->sockfd);
+ 
+ 	list_for_each_entry_safe(c, tmp, &h->chains, list) {
+@@ -1765,6 +1775,11 @@ TC_INSERT_ENTRY(const IPT_CHAINLABEL chain,
+ 		return 0;
+ 	}
+ 
++	if ( iptc_plugin_insert_entry( handle, chain, e, rulenum ) ) {
++		errno = EACCES;
++		return 0;
++	}
++
+ 	/* If we are inserting at the end just take advantage of the
+ 	   double linked list, insert will happen before the entry
+ 	   prev points to. */
+@@ -1821,6 +1836,11 @@ TC_REPLACE_ENTRY(const IPT_CHAINLABEL chain,
+ 		return 0;
+ 	}
+ 
++	if (iptc_plugin_replace_entry( handle, chain, e, rulenum )) {
++		errno = EACCES;
++		return 0;
++	}
++
+ 	/* Take advantage of the double linked list if possible. */
+ 	if (rulenum + 1 <= c->num_rules/2) {
+ 		old = iptcc_get_rule_num(c, rulenum + 1);
+@@ -1866,6 +1886,11 @@ TC_APPEND_ENTRY(const IPT_CHAINLABEL chain,
+ 		return 0;
+ 	}
+ 
++	if (iptc_plugin_append_entry( handle, chain, e )) {
++		errno = EACCES;
++		return 0;
++	}
++
+ 	if (!(r = iptcc_alloc_rule(c, e->next_offset))) {
+ 		DEBUGP("unable to allocate rule for chain `%s'\n", chain);
+ 		errno = ENOMEM;
+@@ -2011,6 +2036,12 @@ static int delete_entry(const IPT_CHAINLABEL chain, const STRUCT_ENTRY *origfw,
+ 			return 1;
+ 		}
+ 
++		if (iptc_plugin_delete_entry( handle, chain, origfw, matchmask )) {
++			free( r );
++			errno = EACCES;
++			return 0;
++		}
++
+ 		/* If we are about to delete the rule that is the
+ 		 * current iterator, move rule iterator back.  next
+ 		 * pointer will then point to real next node */
+@@ -2076,6 +2107,12 @@ TC_DELETE_NUM_ENTRY(const IPT_CHAINLABEL chain,
+ 		r = iptcc_get_rule_num_reverse(c, c->num_rules - rulenum);
+ 	}
+ 
++	if (iptc_plugin_delete_num_entry( handle, chain, &r->entry[0], rulenum ))
++	{
++		errno = EACCES;
++		return 0;
++	}
++
+ 	/* If we are about to delete the rule that is the current
+ 	 * iterator, move rule iterator back.  next pointer will then
+ 	 * point to real next node */
+@@ -2106,6 +2143,12 @@ TC_FLUSH_ENTRIES(const IPT_CHAINLABEL chain, struct xtc_handle *handle)
+ 		return 0;
+ 	}
+ 
++	/* ToDo: if we block a rule or two, the final counter may not be zero */
++	if (iptc_plugin_flush_entries( handle, chain )) {
++		errno = EACCES;
++		return 0;
++	}
++
+ 	list_for_each_entry_safe(r, tmp, &c->rules, list) {
+ 		iptcc_delete_rule(r);
+ 	}
+@@ -2130,6 +2173,11 @@ TC_ZERO_ENTRIES(const IPT_CHAINLABEL chain, struct xtc_handle *handle)
+ 		return 0;
+ 	}
+ 
++	if ( iptc_plugin_zero_entries( handle, chain ) ) {
++		errno = EACCES;
++		return 0;
++	}
++
+ 	if (c->counter_map.maptype == COUNTER_MAP_NORMAL_MAP)
+ 		c->counter_map.maptype = COUNTER_MAP_ZEROED;
+ 
+@@ -2188,6 +2236,11 @@ TC_ZERO_COUNTER(const IPT_CHAINLABEL chain,
+ 		return 0;
+ 	}
+ 
++	if (iptc_plugin_zero_counter( handle, chain, rulenum )) {
++		errno = EACCES;
++		return 0;
++	}
++
+ 	if (r->counter_map.maptype == COUNTER_MAP_NORMAL_MAP)
+ 		r->counter_map.maptype = COUNTER_MAP_ZEROED;
+ 
+@@ -2259,6 +2312,11 @@ TC_CREATE_CHAIN(const IPT_CHAINLABEL chain, struct xtc_handle *handle)
+ 		return 0;
+ 	}
+ 
++	if (iptc_plugin_create_chain( handle, chain )) {
++		errno = EACCES;
++		return 0;
++	}
++
+ 	c = iptcc_alloc_chain_head(chain, 0);
+ 	if (!c) {
+ 		DEBUGP("Cannot allocate memory for chain `%s'\n", chain);
+@@ -2346,6 +2404,11 @@ TC_DELETE_CHAIN(const IPT_CHAINLABEL chain, struct xtc_handle *handle)
+ 		return 0;
+ 	}
+ 
++	if (iptc_plugin_delete_chain( handle, chain )) {
++		errno = EACCES;
++		return 0;
++	}
++
+ 	/* If we are about to delete the chain that is the current
+ 	 * iterator, move chain iterator forward. */
+ 	if (c == handle->chain_iterator_cur)
+@@ -2394,6 +2457,11 @@ int TC_RENAME_CHAIN(const IPT_CHAINLABEL oldname,
+ 		return 0;
+ 	}
+ 
++	if (iptc_plugin_rename_chain( handle, oldname, newname )) {
++		errno = EACCES;
++		return 0;
++	}
++
+ 	/* This only unlinks "c" from the list, thus no free(c) */
+ 	iptcc_chain_index_delete_chain(c, handle);
+ 
+@@ -2431,6 +2499,11 @@ TC_SET_POLICY(const IPT_CHAINLABEL chain,
+ 		return 0;
+ 	}
+ 
++	if (iptc_plugin_set_policy( handle, chain, policy, counters )) {
++		errno = EACCES;
++		return 0;
++	}
++
+ 	if (strcmp(policy, LABEL_ACCEPT) == 0)
+ 		c->verdict = -NF_ACCEPT - 1;
+ 	else if (strcmp(policy, LABEL_DROP) == 0)
+@@ -2687,6 +2760,8 @@ TC_COMMIT(struct xtc_handle *handle)
+ 	free(newcounters);
+ 
+ finished:
++	/* unlike other plugin hooks, commit is called after the commit completes */
++	iptc_plugin_commit( handle );
+ 	return 1;
+ 
+ out_free_newcounters:
+-- 
+2.25.1
+
