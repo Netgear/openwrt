@@ -1,0 +1,18 @@
+--- a/src/openvpn/options.c
++++ b/src/openvpn/options.c
+@@ -2981,6 +2981,7 @@ options_postprocess_mutate(struct options *o)
+ 
+     options_postprocess_mutate_invariant(o);
+ 
++#ifdef ENABLE_CRYPTO
+     if (o->ncp_enabled)
+     {
+         o->ncp_ciphers = mutate_ncp_cipher_list(o->ncp_ciphers, &o->gc);
+@@ -2989,6 +2990,7 @@ options_postprocess_mutate(struct options *o)
+             msg(M_USAGE, "NCP cipher list contains unsupported ciphers or is too long.");
+         }
+     }
++#endif
+ 
+     if (o->remote_list && !o->connection_list)
+     {
